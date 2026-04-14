@@ -257,8 +257,7 @@ def _check_language_match(text: str, provider: str, tts_config: Dict[str, Any]) 
         return None
 
     return (
-        f"TTS language mismatch: text is '{text_lang}' but voice is '{voice_lang}'. "
-        f"Please update your TTS voice in config.yaml."
+        "TTS language mismatch. Run: hermes config edit. Search for 'edge_tts' and choose a voice that supports your language."
     )
 
 # ===========================================================================
