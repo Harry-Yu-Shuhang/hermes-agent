@@ -169,6 +169,115 @@ def _convert_to_opus(mp3_path: str) -> Optional[str]:
         logger.warning("ffmpeg OGG conversion failed: %s", e, exc_info=True)
     return None
 
+# ===========================================================================
+# Language detection & mismatch warning
+# ===========================================================================
+
+from langdetect import detect, LangDetectException
+
+def _detect_text_language(text: str) -> str:
+    """
+    Detect language using langdetect.
+
+    Returns normalized language code:
+    zh / ja / ko / en / fr / de / etc.
+    """
+    if not text or not text.strip():
+        return "unknown"
+
+    try:
+        lang = detect(text)  # e.g. 'en', 'zh-cn', 'fr'
+
+        # 统一归一化
+        if lang.startswith("zh"):
+            return "zh"
+        if lang.startswith("ja"):
+            return "ja"
+        if lang.startswith("ko"):
+            return "ko"
+        if lang.startswith("en"):
+            return "en"
+
+        return lang  # keep same（fr, de, es...）
+
+    except LangDetectException:
+        return "unknown"
+
+
+def _infer_voice_language(provider: str, tts_config: Dict[str, Any]) -> str:
+    """
+    Infer voice language from provider config.
+    Returns: zh / ja / ko / en / or 'unknown'
+    """
+    try:
+        if provider == "edge":
+            voice = tts_config.get("edge", {}).get("voice", DEFAULT_EDGE_VOICE)
+            # e.g. en-US-AriaNeural
+            return voice.split("-")[0].lower()
+
+        voice = ""
+
+        if provider == "openai":
+            voice = tts_config.get("openai", {}).get("voice", "")
+        elif provider == "elevenlabs":
+            voice = tts_config.get("elevenlabs", {}).get("voice_id", "")
+        elif provider == "minimax":
+            voice = tts_config.get("minimax", {}).get("voice_id", "")
+        elif provider == "mistral":
+            voice = tts_config.get("mistral", {}).get("voice_id", "")
+
+        voice = str(voice).lower()
+
+        if "zh" in voice or "chinese" in voice:
+            return "zh"
+        if "ja" in voice or "japanese" in voice:
+            return "ja"
+        if "ko" in voice or "korean" in voice:
+            return "ko"
+        if "en" in voice or "english" in voice:
+            return "en"
+
+    except Exception:
+        pass
+
+    return "unknown"
+
+def _get_language_warning(text: str, provider: str, tts_config: Dict[str, Any]) -> Optional[str]:
+    """
+    Generate a non-blocking warning if text language and voice language mismatch.
+    """
+    text_lang = _detect_text_language(text)
+    voice_lang = _infer_voice_language(provider, tts_config)
+
+    if voice_lang == "unknown":
+        return None
+
+    if text_lang == "other":
+        return None
+
+    # not match -> warning
+    if text_lang != voice_lang:
+        return (
+            f"TTS language mismatch detected: text='{text_lang}' vs voice='{voice_lang}'. "
+            f"Consider updating your TTS voice in config.yaml."
+        )
+
+    return None
+
+def _check_language_match(text: str, provider: str, tts_config: Dict[str, Any]) -> Optional[str]:
+    text_lang = _detect_text_language(text)
+    voice_lang = _infer_voice_language(provider, tts_config)
+
+    if text_lang == "unknown" or voice_lang == "unknown":
+        return None
+
+    if text_lang == voice_lang:
+        return None
+
+    return (
+        f"TTS language mismatch: text is '{text_lang}' but voice is '{voice_lang}'. "
+        f"Please update your TTS voice in config.yaml."
+    )
 
 # ===========================================================================
 # Provider: Edge TTS (free)
@@ -543,6 +652,15 @@ def text_to_speech_tool(
 
     tts_config = _load_tts_config()
     provider = _get_provider(tts_config)
+
+    # Language mismatch → treat as error
+    lang_error = _check_language_match(text, provider, tts_config)
+    if lang_error:
+        logger.warning(lang_error)
+        return json.dumps({
+            "success": False,
+            "error": lang_error
+        }, ensure_ascii=False)
 
     # Detect platform from gateway env var to choose the best output format.
     # Telegram voice bubbles require Opus (.ogg); OpenAI and ElevenLabs can
