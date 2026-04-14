@@ -173,11 +173,13 @@ def _convert_to_opus(mp3_path: str) -> Optional[str]:
 # Language detection & mismatch warning
 # ===========================================================================
 
-from langdetect import detect, LangDetectException
+def _import_langid():
+    import langid
+    return langid
 
 def _detect_text_language(text: str) -> str:
     """
-    Detect language using langdetect.
+    Detect language using langid.
 
     Returns normalized language code:
     zh / ja / ko / en / fr / de / etc.
@@ -186,9 +188,12 @@ def _detect_text_language(text: str) -> str:
         return "unknown"
 
     try:
-        lang = detect(text)  # e.g. 'en', 'zh-cn', 'fr'
+        try:
+            langid = _import_langid()
+            lang, score = langid.classify(text)
+        except ImportError:
+            return "unknown"
 
-        # 统一归一化
         if lang.startswith("zh"):
             return "zh"
         if lang.startswith("ja"):
@@ -198,11 +203,10 @@ def _detect_text_language(text: str) -> str:
         if lang.startswith("en"):
             return "en"
 
-        return lang  # keep same（fr, de, es...）
+        return lang
 
-    except LangDetectException:
+    except Exception:
         return "unknown"
-
 
 def _infer_voice_language(provider: str, tts_config: Dict[str, Any]) -> str:
     """
@@ -241,28 +245,6 @@ def _infer_voice_language(provider: str, tts_config: Dict[str, Any]) -> str:
         pass
 
     return "unknown"
-
-def _get_language_warning(text: str, provider: str, tts_config: Dict[str, Any]) -> Optional[str]:
-    """
-    Generate a non-blocking warning if text language and voice language mismatch.
-    """
-    text_lang = _detect_text_language(text)
-    voice_lang = _infer_voice_language(provider, tts_config)
-
-    if voice_lang == "unknown":
-        return None
-
-    if text_lang == "other":
-        return None
-
-    # not match -> warning
-    if text_lang != voice_lang:
-        return (
-            f"TTS language mismatch detected: text='{text_lang}' vs voice='{voice_lang}'. "
-            f"Consider updating your TTS voice in config.yaml."
-        )
-
-    return None
 
 def _check_language_match(text: str, provider: str, tts_config: Dict[str, Any]) -> Optional[str]:
     text_lang = _detect_text_language(text)
